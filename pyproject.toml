@@ -1,0 +1,87 @@
+[tool.poetry]
+name = "task-manager"
+version = "0.1.0"
+description = ""
+authors = ["khmtdnv <marvelous.rust@yandex.ru>"]
+readme = "README.md"
+packages = [{ include = "config" }, { include = "apps" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+django = "^5.2.8"
+python-decouple = "^3.8"
+psycopg2-binary = "^2.9.11"
+django-phonenumber-field = {extras = ["phonenumberslite"], version = "^8.4.0"}
+djangorestframework = "^3.16.1"
+djangorestframework-simplejwt = "^5.5.1"
+celery = "^5.6.0"
+redis = "^7.1.0"
+flower = "^2.0.1"
+pip = "^25.3"
+django-extra-settings = "^0.14.1"
+django-prometheus = "^2.4.1"
+django-redis = "^6.0.0"
+
+[tool.poetry.group.staging.dependencies]
+django-debug-toolbar = "^6.1.0"
+black = "^25.11.0"
+pre-commit = "^4.5.0"
+isort = "^7.0.0"
+flake8 = "^7.3.0"
+flake8-pyproject = "^1.2.4"
+drf-yasg = "^1.21.11"
+mypy = "^1.19.1"
+django-stubs = "^5.2.8"
+pytest = "^9.0.2"
+bakery = "^1.0.0"
+faker = "^40.1.2"
+django-extensions = "^4.1"
+django-cprofile-middleware = "^1.0.5"
+pytest-django = "^4.11.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# Настройки линтеров остаются без изменений
+[tool.black]
+line-length = 88
+target-version = ['py311']
+extend-exclude = '''
+/(
+    migrations
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip_glob = ["**/migrations/*.py"]
+
+[tool.flake8]
+max-line-length = 88
+exclude = ["migrations", "manage.py", "__pycache__", ".venv"]
+extend-ignore = ["E203", "E501", "W503", "W504", "F405", "F403"]
+
+[tool.mypy]
+plugins = ["mypy_django_plugin.main"]
+
+[tool.django-stubs]
+django_settings_module = "config.settings.staging"
+
+[[tool.mypy.overrides]]
+module = "*.migrations.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.staging"
+python_files = [
+    "tests.py",
+    "test_*.py",
+    "*_tests.py"
+]
+# Опции запуска
+# -v: подробно
+# --nomigrations: не применять миграции (создаст базу сразу по моделям, это быстрее)
+# --ignore=venv: не искать тесты в папке venv
+addopts = "-v --nomigrations --ignore=venv"

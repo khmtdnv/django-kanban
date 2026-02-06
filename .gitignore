@@ -1,0 +1,8 @@
+.venv
+
+.env
+.env.staging
+Tasks.md
+.vscode
+staticfiles
+__pycache__
