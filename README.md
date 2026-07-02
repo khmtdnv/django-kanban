@@ -1,111 +1,98 @@
-# fastapi-restaurant
+# django-kanban
 
-> Микросервисное приложение для управления процессами ресторана: от просмотра меню до обработки оплаты.
+> Backend-сервис для управления задачами и проектами с канбан-досками, системой уведомлений и аналитикой.
 
 ---
 
 ## Содержание
 
 - [О проекте](#о-проекте)
-- [Архитектура](#архитектура)
-- [Сервисы](#сервисы)
 - [Стек технологий](#стек-технологий)
+- [Функциональность](#функциональность)
+- [Архитектура](#архитектура)
 - [Запуск](#запуск)
-- [API Gateway](#api-gateway)
-- [События RabbitMQ](#события-rabbitmq)
+- [API](#api)
+- [Мониторинг](#мониторинг)
 
 ---
 
 ## О проекте
 
-fastapi-restaurant — микросервисное приложение, реализующее полный цикл ресторанного заказа: регистрация пользователя, просмотр меню с категориями и фото, формирование заказа, обработка оплаты и уведомления об изменении статусов.
+django-kanban — монолитный REST API-сервис для командного управления проектами. Пользователи могут организовывать работу через канбан-доски, получать уведомления о дедлайнах и изменениях, а руководители — просматривать аналитику по производительности команды.
 
-Каждый сервис имеет собственную зону ответственности, изолированную схему в PostgreSQL и взаимодействует с остальными через REST и асинхронные события (EDA через RabbitMQ).
+---
+
+## Стек технологий
+
+| Категория            | Технологии                                |
+| -------------------- | ----------------------------------------- |
+| **Язык / Фреймворк** | Python, Django, Django REST Framework     |
+| **База данных**      | PostgreSQL, Redis                         |
+| **ORM / Миграции**   | Django ORM, встроенные миграции Django    |
+| **Очереди задач**    | Celery + RabbitMQ                         |
+| **Контейнеризация**  | Docker, Docker Compose (multistage)       |
+| **Мониторинг**       | Prometheus, Grafana, Sentry (self-hosted) |
+| **Документация API** | Swagger / ReDoc (drf_yasg)                |
+| **Качество кода**    | flake8, black, isort, pre-commit          |
+| **Тесты**            | Pytest                                    |
+
+---
+
+## Функциональность
+
+### Управление задачами и проектами
+- Создание проектов с настраиваемыми канбан-досками (колонки: Бэклог, В работе, Тестирование, Завершено и др.)
+- Карточки задач: название, описание, приоритет, исполнитель, метки, трекинг времени
+- Вложенные подзадачи и связи между задачами
+- Управление участниками проекта
+
+### Авторизация
+- Регистрация / авторизация по номеру телефона
+- Подтверждение через SMS-код (Celery + Django signals)
+- JWT access + refresh токены
+
+### Система уведомлений
+- Push-уведомления и email при: назначении задачи, изменении приоритета, упоминании, завершении
+- Автоматические напоминания о дедлайнах (за неделю, 3 дня, 1 день)
+- Настраиваемые каналы уведомлений для каждого пользователя
+
+### Аналитика и отчётность
+- Отчёты по времени выполнения задач и распределению по исполнителям
+- Метрики: среднее время выполнения, количество блокирующих задач
+- Прогнозирование сроков на основе исторических данных
+- Экспорт отчётов в PDF и CSV
+
+### Производительность
+- Redis-кэширование с warm-up cache
+- Throttling и rate-limiting для авторизационных эндпоинтов
+- Индексы PostgreSQL, оптимизация запросов через `EXPLAIN ANALYZE`
+- `select_related` / `prefetch_related` для минимизации N+1
 
 ---
 
 ## Архитектура
 
 ```
-                        ┌─────────────┐
-           Клиент ───►  │   Traefik   │  (API Gateway)
-                        └──────┬──────┘
-                               │  JWT-валидация → ms_auth
-              ┌────────────────┼─────────────────────┐
-              │                │                     │
-       ┌──────▼─────┐  ┌───────▼────┐  ┌────────────▼───┐
-       │  ms_auth   │  │  ms_menu   │  │   ms_order     │
-       │            │  │            │  │                │
-       │ PostgreSQL │  │ PostgreSQL │  │  PostgreSQL    │
-       │   (auth)   │  │   (menu)   │  │   (orders)     │
-       └────────────┘  └─────┬──────┘  └───────┬────────┘
-                             │                  │
-                      ┌──────▼──────────────────▼──────┐
-                      │         RabbitMQ               │
-                      │  (EDA: menu / order / payment) │
-                      └─────────────────┬──────────────┘
-                                        │
-                               ┌────────▼────────┐
-                               │   ms_payment    │
-                               │                 │
-                               │   PostgreSQL    │
-                               │   (payments)    │
-                               └─────────────────┘
-                      
-                   Redis — кэш меню (ms_menu)
-                   MinIO — хранилище фото блюд
+┌─────────────────────────────────────────────────┐
+│                   Django App                    │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
+│  │  Tasks   │  │  Boards  │  │  Analytics   │  │
+│  └──────────┘  └──────────┘  └──────────────┘  │
+│  ┌──────────────────────────────────────────┐   │
+│  │          Django REST Framework           │   │
+│  └──────────────────────────────────────────┘   │
+└────────────┬──────────────┬────────────────────┘
+             │              │
+     ┌───────▼──────┐  ┌────▼──────────┐
+     │  PostgreSQL  │  │     Redis     │
+     └──────────────┘  └───────────────┘
+             │
+     ┌───────▼──────────────────┐
+     │  Celery + RabbitMQ       │
+     │  (SMS, уведомления,      │
+     │   периодические задачи)  │
+     └──────────────────────────┘
 ```
-
----
-
-## Сервисы
-
-### ms_auth — Авторизация
-- Регистрация по номеру телефона + подтверждение SMS-кодом (Celery)
-- JWT access + refresh токены с полем `is_phone_verified`
-- Роли: `user` / `superuser (admin)`
-- Роуты: `/auth` (авторизация), `/users` (профиль)
-- Методы `get_current_user` / `get_current_admin_user` для инъекции в эндпоинты
-
-### ms_menu — Меню
-- CRUD блюд и категорий (только для администраторов)
-- Система тегов (ManyToMany): «Острое», «Вегетарианское» и др.
-- Комбо-наборы из нескольких блюд со специальной ценой
-- Хранение фото блюд через MinIO (S3-совместимое)
-- Кэширование агрегированного меню в Redis, инвалидация по событиям RabbitMQ
-- Версионирование API: `v1` — плоское, `v2` — расширенное с вложенными данными
-- Пагинация результатов
-
-### ms_order — Заказы
-- Разделение корзины и оформленного заказа
-- Валидация блюд через `ms_menu` (проверка наличия и цен)
-- Статусы: `Создан → Готовится → Готов → Выдан / Отменён`
-- Политика ретраев и каскадных откатов при недоступности сервисов
-- Rate-limiting, разграничение прав по роли (клиент vs администратор)
-
-### ms_payment — Оплата
-- Мок-реализация платёжного шлюза по принципу ЮKassa / CloudPayments
-- Оплата по карте и СБП, обработка через callback (без переопроса)
-- Возврат средств (refund) при отмене заказа
-- Уведомление `ms_order` о статусе оплаты через RabbitMQ
-
----
-
-## Стек технологий
-
-| Категория              | Технологии                             |
-| ---------------------- | -------------------------------------- |
-| **Язык / Фреймворк**   | Python, FastAPI, asyncio               |
-| **База данных**        | PostgreSQL (отдельная схема на сервис) |
-| **ORM / Миграции**     | SQLAlchemy 2.0 + asyncpg, Alembic      |
-| **Кэш**                | Redis                                  |
-| **Очереди / EDA**      | RabbitMQ + aio_pika                    |
-| **Файловое хранилище** | MinIO (S3)                             |
-| **API Gateway**        | Traefik                                |
-| **Контейнеризация**    | Docker, Docker Compose (multistage)    |
-| **Качество кода**      | black, flake8, isort, pre-commit       |
-| **Тесты**              | Pytest                                 |
-| **Валидация**          | Pydantic v2, pydantic-settings         |
 
 ---
 
@@ -119,31 +106,36 @@ fastapi-restaurant — микросервисное приложение, реа
 
 ```bash
 # 1. Клонировать репозиторий
-git clone https://github.com/khmtdnv/fastapi-restaurant.git
-cd fastapi-restaurant
+git clone https://github.com/khmtdnv/django-kanban.git
+cd django-kanban
 
-# 2. Создать файлы окружения
+# 2. Создать файл окружения
 cp .env.example .env
-# Заполнить переменные
+# Заполнить переменные в .env
 
-# 3. Запустить все сервисы
+# 3. Запустить
 docker compose up -d --build
 
-# 4. Выполнить миграции для каждого сервиса
-docker compose exec ms_auth alembic upgrade head
-docker compose exec ms_menu alembic upgrade head
-docker compose exec ms_order alembic upgrade head
-docker compose exec ms_payment alembic upgrade head
+# 4. Выполнить миграции
+docker compose exec web python manage.py migrate
+
+# 5. Создать суперпользователя
+docker compose exec web python manage.py createsuperuser
 ```
 
 ### Переменные окружения (.env.example)
 
 ```env
+SECRET_KEY=your-secret-key
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+
 # Database
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
+POSTGRES_DB=django-kanban
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
+POSTGRES_HOST=db
+POSTGRES_PORT=5432
 
 # Redis
 REDIS_URL=redis://redis:6379/0
@@ -151,46 +143,40 @@ REDIS_URL=redis://redis:6379/0
 # RabbitMQ
 RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
 
-# JWT
-JWT_SECRET_KEY=your-secret-key
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-REFRESH_TOKEN_EXPIRE_DAYS=7
-
-# MinIO
-MINIO_ENDPOINT=minio:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET_NAME=menu-images
+# Sentry
+SENTRY_DSN=
 ```
 
 ---
 
-## API Gateway
+## API
 
-Все запросы проходят через **Traefik**. Для защищённых маршрутов Traefik перенаправляет запрос на `ms_auth` для валидации JWT-токена перед проксированием в целевой сервис.
+Документация доступна после запуска:
+- **Swagger UI**: `http://localhost:8000/api/swagger/`
+- **ReDoc**: `http://localhost:8000/api/redoc/`
 
-| Сервис | Базовый путь |
-|---|---|
-| ms_auth | `/auth/`, `/users/` |
-| ms_menu | `/menu/` |
-| ms_order | `/orders/` |
-| ms_payment | `/payments/` |
+### Основные эндпоинты
 
-Swagger-документация каждого сервиса доступна по `/{service}/docs`.
+| Метод | URL | Описание |
+|---|---|---|
+| `POST` | `/api/auth/register/` | Регистрация |
+| `POST` | `/api/auth/verify-sms/` | Подтверждение номера |
+| `POST` | `/api/auth/token/` | Получение JWT |
+| `GET` | `/api/projects/` | Список проектов |
+| `POST` | `/api/projects/` | Создание проекта |
+| `POST` | `/api/projects/{id}/members/` | Добавление участника |
+| `GET` | `/api/boards/` | Список досок |
+| `POST` | `/api/boards/{id}/columns/reorder/` | Изменение порядка колонок |
+| `GET` | `/api/tasks/` | Список задач |
+| `POST` | `/api/tasks/{id}/move/` | Перемещение между колонками |
+| `POST` | `/api/tasks/{id}/assign/` | Назначение исполнителя |
+| `POST` | `/api/tasks/{id}/subtasks/` | Создание подзадачи |
 
 ---
 
-## События RabbitMQ
+## Мониторинг
 
-Сервисы взаимодействуют асинхронно через события (EDA):
-
-| Событие | Издатель | Подписчики | Описание |
-|---|---|---|---|
-| `menu.dish.created` | ms_menu | — | Добавлено новое блюдо |
-| `menu.price.change` | ms_menu | ms_order | Изменилась цена блюда |
-| `menu.updated` | ms_menu | — | Обновлено меню (инвалидация кэша) |
-| `menu.item.availability` | ms_menu | ms_order | Блюдо в стоп-листе |
-| `order.created` | ms_order | ms_payment | Заказ оформлен, ожидает оплаты |
-| `payment.success` | ms_payment | ms_order | Оплата прошла успешно |
-| `payment.failed` | ms_payment | ms_order | Оплата не прошла |
+- **Grafana**: `http://localhost:3000` — дашборды метрик приложения
+- **Prometheus**: `http://localhost:9090` — сбор метрик
+- **Sentry**: self-hosted, настраивается через `SENTRY_DSN`
+- **Django Admin**: `http://localhost:8000/admin/` — управление данными
